@@ -1,0 +1,28 @@
+# Python & Environments
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+.venv
+.pydeps/
+
+# Jupyter Notebook Checkpoints & Logs
+.ipynb_checkpoints
+*/.ipynb_checkpoints/*
+notebook_execution.log
+notebook_execution.err.log
+
+# Operating System & IDEs
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Environment Variables
+.env
