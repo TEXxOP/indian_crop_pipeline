@@ -1,0 +1,522 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="Interactive dashboard for India district-level crop production analytics and ML-powered predictions across 475+ districts, 19 crops, and 3 years.">
+    <title>🌾 India Crop Production Dashboard</title>
+    <link rel="stylesheet" href="/static/style.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+</head>
+<body>
+
+<!-- Scroll Progress Indicator -->
+<div class="scroll-progress" id="scroll-progress"></div>
+
+<!-- Ambient Background Orbs -->
+<div class="ambient-orb ambient-orb-1"></div>
+<div class="ambient-orb ambient-orb-2"></div>
+<div class="ambient-orb ambient-orb-3"></div>
+
+<!-- Back to Top Button -->
+<button class="back-to-top" id="back-to-top" onclick="scrollToTop()" title="Back to top">&#8593;</button>
+
+<!-- Toast Notification Container -->
+<div class="toast-container" id="toast-container"></div>
+
+<!-- ══════════════════════════════════════════════════════════════════════ -->
+<!--  SIDEBAR                                                             -->
+<!-- ══════════════════════════════════════════════════════════════════════ -->
+<aside class="sidebar" id="sidebar">
+    <div class="sidebar-header">
+        <div class="sidebar-logo">🌾</div>
+        <div>
+            <div class="sidebar-title">CropVision</div>
+            <div class="sidebar-subtitle">India Analytics</div>
+        </div>
+    </div>
+    <nav class="sidebar-nav">
+        <a class="nav-item active" data-section="overview" onclick="scrollToSection('overview')">
+            <span class="nav-icon">📊</span>
+            <span class="nav-label">Overview</span>
+        </a>
+        <a class="nav-item" data-section="crop-analytics" onclick="scrollToSection('crop-analytics')">
+            <span class="nav-icon">🌿</span>
+            <span class="nav-label">Crop Analytics</span>
+        </a>
+        <a class="nav-item" data-section="geographic" onclick="scrollToSection('geographic')">
+            <span class="nav-icon">🗺️</span>
+            <span class="nav-label">Geographic Explorer</span>
+        </a>
+        <a class="nav-item" data-section="predict" onclick="scrollToSection('predict')">
+            <span class="nav-icon">🤖</span>
+            <span class="nav-label">Predict Production</span>
+        </a>
+        <a class="nav-item" data-section="models" onclick="scrollToSection('models')">
+            <span class="nav-icon">📈</span>
+            <span class="nav-label">Model Performance</span>
+        </a>
+        <a class="nav-item" data-section="data-explorer" onclick="scrollToSection('data-explorer')">
+            <span class="nav-icon">🔬</span>
+            <span class="nav-label">Data Explorer</span>
+        </a>
+    </nav>
+    <div class="sidebar-footer">
+        India Districts Crop Production<br>27,303 records · 3 years
+    </div>
+</aside>
+
+<!-- ══════════════════════════════════════════════════════════════════════ -->
+<!--  MAIN CONTENT                                                        -->
+<!-- ══════════════════════════════════════════════════════════════════════ -->
+<main class="main-content" id="main-content">
+
+    <!-- ── Section 1: Overview ─────────────────────────────────────────── -->
+    <section class="dashboard-section" id="overview">
+        <div class="section-header">
+            <div class="section-tag">📊 Dashboard</div>
+            <h1 class="section-title">India Crop Production <span class="text-gradient">Overview</span></h1>
+            <p class="section-subtitle">Real-time analytics across 475+ districts, 19 crops, and 3 crop years (2021–2024)</p>
+        </div>
+
+        <div class="kpi-grid" id="kpi-grid">
+            <!-- Populated by JS -->
+        </div>
+
+        <div class="charts-grid">
+            <div class="chart-card">
+                <div class="chart-header">
+                    <div>
+                        <div class="chart-title">Production by Year</div>
+                        <div class="chart-subtitle">Total production across all crops and states</div>
+                    </div>
+                </div>
+                <div class="chart-wrapper"><canvas id="chart-yearly"></canvas></div>
+            </div>
+            <div class="chart-card">
+                <div class="chart-header">
+                    <div>
+                        <div class="chart-title">Top 10 Crops</div>
+                        <div class="chart-subtitle">By total production (thousand tonnes)</div>
+                    </div>
+                </div>
+                <div class="chart-wrapper"><canvas id="chart-top-crops"></canvas></div>
+            </div>
+        </div>
+
+        <div class="charts-grid">
+            <div class="chart-card full-width">
+                <div class="chart-header">
+                    <div>
+                        <div class="chart-title">Top 10 States by Production</div>
+                        <div class="chart-subtitle">Aggregate production across all crops and years</div>
+                    </div>
+                </div>
+                <div class="chart-wrapper"><canvas id="chart-top-states"></canvas></div>
+            </div>
+        </div>
+    </section>
+
+    <!-- ── Section 2: Crop Analytics ───────────────────────────────────── -->
+    <section class="dashboard-section" id="crop-analytics">
+        <div class="section-header">
+            <div class="section-tag">🌿 Analytics</div>
+            <h2 class="section-title">Crop <span class="text-gradient">Analytics</span></h2>
+            <p class="section-subtitle">Deep dive into individual crop performance across states and districts</p>
+        </div>
+
+        <div class="filter-bar">
+            <div class="filter-group">
+                <span class="filter-label">Select Crop</span>
+                <select class="filter-select" id="crop-filter" onchange="updateCropAnalytics()">
+                    <option value="">All Crops</option>
+                </select>
+            </div>
+            <div class="filter-group">
+                <span class="filter-label">Year</span>
+                <select class="filter-select" id="crop-year-filter" onchange="updateCropAnalytics()">
+                    <option value="">All Years</option>
+                </select>
+            </div>
+        </div>
+
+        <div class="charts-grid">
+            <div class="chart-card">
+                <div class="chart-header">
+                    <div>
+                        <div class="chart-title">State-wise Production</div>
+                        <div class="chart-subtitle">Filtered by selected crop & year</div>
+                    </div>
+                </div>
+                <div class="chart-wrapper"><canvas id="chart-crop-states"></canvas></div>
+            </div>
+            <div class="chart-card">
+                <div class="chart-header">
+                    <div>
+                        <div class="chart-title">Year-over-Year Trend</div>
+                        <div class="chart-subtitle">Production trend for selected crop</div>
+                    </div>
+                </div>
+                <div class="chart-wrapper"><canvas id="chart-crop-trend"></canvas></div>
+            </div>
+        </div>
+
+        <div class="charts-grid">
+            <div class="chart-card">
+                <div class="chart-header">
+                    <div>
+                        <div class="chart-title">Top 10 Districts</div>
+                        <div class="chart-subtitle">Highest producing districts</div>
+                    </div>
+                </div>
+                <div class="chart-wrapper"><canvas id="chart-top-districts"></canvas></div>
+            </div>
+            <div class="chart-card">
+                <div class="chart-header">
+                    <div>
+                        <div class="chart-title">Soil & Weather Profile</div>
+                        <div class="chart-subtitle">Average conditions for selected crop</div>
+                    </div>
+                </div>
+                <div class="chart-wrapper"><canvas id="chart-soil-radar"></canvas></div>
+            </div>
+        </div>
+    </section>
+
+    <!-- ── Section 3: Geographic Explorer ──────────────────────────────── -->
+    <section class="dashboard-section" id="geographic">
+        <div class="section-header">
+            <div class="section-tag">🗺️ Explorer</div>
+            <h2 class="section-title">Geographic <span class="text-gradient">Explorer</span></h2>
+            <p class="section-subtitle">Explore production data by state and district, compare soil & weather profiles</p>
+        </div>
+
+        <div class="filter-bar">
+            <div class="filter-group">
+                <span class="filter-label">State</span>
+                <select class="filter-select" id="geo-state" onchange="onGeoStateChange()">
+                    <option value="">Select State</option>
+                </select>
+            </div>
+            <div class="filter-group">
+                <span class="filter-label">District</span>
+                <select class="filter-select" id="geo-district" onchange="onGeoDistrictChange()">
+                    <option value="">Select District</option>
+                </select>
+            </div>
+        </div>
+
+        <div class="charts-grid">
+            <div class="chart-card">
+                <div class="chart-header">
+                    <div>
+                        <div class="chart-title">Production by Crop</div>
+                        <div class="chart-subtitle">For the selected district/state</div>
+                    </div>
+                </div>
+                <div class="chart-wrapper"><canvas id="chart-geo-crops"></canvas></div>
+            </div>
+            <div class="chart-card">
+                <div class="chart-header">
+                    <div>
+                        <div class="chart-title">Soil & Weather Details</div>
+                        <div class="chart-subtitle">Environmental profile of selected area</div>
+                    </div>
+                </div>
+                <div class="chart-wrapper"><canvas id="chart-geo-radar"></canvas></div>
+            </div>
+        </div>
+
+        <div class="charts-grid">
+            <div class="chart-card full-width">
+                <div class="chart-header">
+                    <div>
+                        <div class="chart-title">Geographic Production Scatter</div>
+                        <div class="chart-subtitle">Bubble size = production level (Latitude vs Longitude)</div>
+                    </div>
+                </div>
+                <div class="chart-wrapper" style="min-height:400px;"><canvas id="chart-geo-scatter"></canvas></div>
+            </div>
+        </div>
+    </section>
+
+    <!-- ── Section 4: Predict Production ───────────────────────────────── -->
+    <section class="dashboard-section" id="predict">
+        <div class="section-header">
+            <div class="section-tag">🤖 Machine Learning</div>
+            <h2 class="section-title">Predict <span class="text-gradient">Production</span></h2>
+            <p class="section-subtitle">Use the trained ML model to predict crop production for any district-crop-year combination</p>
+        </div>
+
+        <div class="predict-layout">
+            <div class="predict-form">
+                <h3 style="font-size:1.05rem; margin-bottom:20px; color:var(--text-primary);">Input Parameters</h3>
+                <div class="form-grid">
+                    <!-- Dropdowns -->
+                    <div class="form-group">
+                        <label class="form-label">State</label>
+                        <select class="form-select" id="pred-state" onchange="onPredStateChange()">
+                            <option value="">Select State</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">District</label>
+                        <select class="form-select" id="pred-district">
+                            <option value="">Select District</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Crop</label>
+                        <select class="form-select" id="pred-crop">
+                            <option value="">Select Crop</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Year</label>
+                        <select class="form-select" id="pred-year">
+                            <option value="2024">2024</option>
+                            <option value="2023">2023</option>
+                            <option value="2022">2022</option>
+                            <option value="2021">2021</option>
+                        </select>
+                    </div>
+
+                    <!-- Soil Sliders -->
+                    <div class="form-group slider-group">
+                        <div class="slider-header">
+                            <label class="form-label">Nitrogen (kg/ha)</label>
+                            <span class="slider-value" id="val-nitrogen">200</span>
+                        </div>
+                        <input type="range" id="pred-nitrogen" min="0" max="500" value="200" step="5" oninput="updateSliderVal('nitrogen')">
+                    </div>
+                    <div class="form-group slider-group">
+                        <div class="slider-header">
+                            <label class="form-label">Phosphorus (kg/ha)</label>
+                            <span class="slider-value" id="val-phosphorus">20</span>
+                        </div>
+                        <input type="range" id="pred-phosphorus" min="0" max="100" value="20" step="1" oninput="updateSliderVal('phosphorus')">
+                    </div>
+                    <div class="form-group slider-group">
+                        <div class="slider-header">
+                            <label class="form-label">Potassium (kg/ha)</label>
+                            <span class="slider-value" id="val-potassium">200</span>
+                        </div>
+                        <input type="range" id="pred-potassium" min="0" max="500" value="200" step="5" oninput="updateSliderVal('potassium')">
+                    </div>
+                    <div class="form-group slider-group">
+                        <div class="slider-header">
+                            <label class="form-label">Organic Carbon (%)</label>
+                            <span class="slider-value" id="val-organic_carbon">0.5</span>
+                        </div>
+                        <input type="range" id="pred-organic_carbon" min="0" max="2" value="0.5" step="0.05" oninput="updateSliderVal('organic_carbon')">
+                    </div>
+                    <div class="form-group slider-group">
+                        <div class="slider-header">
+                            <label class="form-label">Soil pH</label>
+                            <span class="slider-value" id="val-soil_ph">7.0</span>
+                        </div>
+                        <input type="range" id="pred-soil_ph" min="3" max="10" value="7.0" step="0.1" oninput="updateSliderVal('soil_ph')">
+                    </div>
+
+                    <!-- Weather Sliders -->
+                    <div class="form-group slider-group">
+                        <div class="slider-header">
+                            <label class="form-label">Temperature (°C)</label>
+                            <span class="slider-value" id="val-temperature">27</span>
+                        </div>
+                        <input type="range" id="pred-temperature" min="5" max="45" value="27" step="0.5" oninput="updateSliderVal('temperature')">
+                    </div>
+                    <div class="form-group slider-group">
+                        <div class="slider-header">
+                            <label class="form-label">Humidity (%)</label>
+                            <span class="slider-value" id="val-humidity">75</span>
+                        </div>
+                        <input type="range" id="pred-humidity" min="10" max="100" value="75" step="1" oninput="updateSliderVal('humidity')">
+                    </div>
+                    <div class="form-group slider-group">
+                        <div class="slider-header">
+                            <label class="form-label">Precipitation (mm)</label>
+                            <span class="slider-value" id="val-precipitation">0.2</span>
+                        </div>
+                        <input type="range" id="pred-precipitation" min="0" max="5" value="0.2" step="0.05" oninput="updateSliderVal('precipitation')">
+                    </div>
+                    <div class="form-group slider-group">
+                        <div class="slider-header">
+                            <label class="form-label">Sunshine (hours)</label>
+                            <span class="slider-value" id="val-sunshine">7</span>
+                        </div>
+                        <input type="range" id="pred-sunshine" min="0" max="14" value="7" step="0.5" oninput="updateSliderVal('sunshine')">
+                    </div>
+
+                    <div class="form-group full-width">
+                        <button class="predict-btn" id="predict-btn" onclick="runPrediction()">
+                            🌾 Predict Production
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <div class="predict-result" id="predict-result">
+                <div class="result-hero" id="result-hero">
+                    <div class="result-label">Predicted Production</div>
+                    <div class="result-value" id="result-value">—</div>
+                    <div class="result-unit">thousand tonnes</div>
+                    <div class="model-badge" id="model-badge" style="display:none;">
+                        <span>✅</span>
+                        <span id="model-name-badge">Model</span>
+                    </div>
+                </div>
+
+                <div>
+                    <div class="chart-title" style="margin-bottom:12px;">Model Metrics</div>
+                    <div class="metric-cards" id="model-metric-cards">
+                        <div class="metric-card">
+                            <div class="metric-card-value" id="metric-r2">—</div>
+                            <div class="metric-card-label">R² Score</div>
+                        </div>
+                        <div class="metric-card">
+                            <div class="metric-card-value" id="metric-rmse">—</div>
+                            <div class="metric-card-label">RMSE</div>
+                        </div>
+                        <div class="metric-card">
+                            <div class="metric-card-value" id="metric-mae">—</div>
+                            <div class="metric-card-label">MAE</div>
+                        </div>
+                    </div>
+                </div>
+
+                <div>
+                    <div class="chart-title" style="margin-bottom:12px;">Feature Importance</div>
+                    <div class="importance-bar-container" id="importance-bars">
+                        <!-- Populated by JS -->
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- ── Section 5: Model Performance ────────────────────────────────── -->
+    <section class="dashboard-section" id="models">
+        <div class="section-header">
+            <div class="section-tag">📈 ML Models</div>
+            <h2 class="section-title">Model <span class="text-gradient">Performance</span></h2>
+            <p class="section-subtitle">Comparison of all 8 trained models — from Linear Regression to LightGBM</p>
+        </div>
+
+        <div class="chart-card mb-32">
+            <div class="chart-header">
+                <div>
+                    <div class="chart-title">Model Comparison — R² Score</div>
+                    <div class="chart-subtitle">Higher is better. Max possible = 1.0</div>
+                </div>
+            </div>
+            <div class="chart-wrapper"><canvas id="chart-model-r2"></canvas></div>
+        </div>
+
+        <div class="charts-grid mb-32">
+            <div class="chart-card">
+                <div class="chart-header">
+                    <div>
+                        <div class="chart-title">RMSE Comparison</div>
+                        <div class="chart-subtitle">Lower is better — penalises large errors</div>
+                    </div>
+                </div>
+                <div class="chart-wrapper"><canvas id="chart-model-rmse"></canvas></div>
+            </div>
+            <div class="chart-card">
+                <div class="chart-header">
+                    <div>
+                        <div class="chart-title">MAE Comparison</div>
+                        <div class="chart-subtitle">Lower is better — treats all errors equally</div>
+                    </div>
+                </div>
+                <div class="chart-wrapper"><canvas id="chart-model-mae"></canvas></div>
+            </div>
+        </div>
+
+        <div class="chart-card">
+            <div class="chart-header">
+                <div>
+                    <div class="chart-title">Full Comparison Table</div>
+                    <div class="chart-subtitle">All models ranked by R² — best model highlighted</div>
+                </div>
+            </div>
+            <div class="table-container" style="border:none; box-shadow:none;">
+                <table class="model-table" id="model-comparison-table">
+                    <thead>
+                        <tr>
+                            <th>Rank</th>
+                            <th>Model</th>
+                            <th>R²</th>
+                            <th>Adj R²</th>
+                            <th>RMSE</th>
+                            <th>MAE</th>
+                        </tr>
+                    </thead>
+                    <tbody id="model-table-body">
+                        <!-- Populated by JS -->
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </section>
+
+    <!-- ── Section 6: Data Explorer ────────────────────────────────────── -->
+    <section class="dashboard-section" id="data-explorer">
+        <div class="section-header">
+            <div class="section-tag">🔬 Explorer</div>
+            <h2 class="section-title">Data <span class="text-gradient">Explorer</span></h2>
+            <p class="section-subtitle">Search, sort, and explore the complete dataset of 27,303 records</p>
+        </div>
+
+        <div class="search-bar">
+            <input type="text" class="search-input" id="data-search" placeholder="Search by state, district, or crop name..." oninput="debounceSearch()">
+        </div>
+
+        <div class="charts-grid mb-24">
+            <div class="chart-card">
+                <div class="chart-header">
+                    <div>
+                        <div class="chart-title">Distribution</div>
+                        <div class="chart-subtitle">Select a numeric column to visualise</div>
+                    </div>
+                    <select class="filter-select" id="dist-column" onchange="loadDistribution()" style="min-width:180px;">
+                        <option value="Production">Production</option>
+                        <option value="Nitrogen (kg/ha)">Nitrogen</option>
+                        <option value="Phosphorus (kg/ha)">Phosphorus</option>
+                        <option value="Potassium (kg/ha)">Potassium</option>
+                        <option value="Organic Carbon (%)">Organic Carbon</option>
+                        <option value="Soil pH">Soil pH</option>
+                        <option value="weather_temp_c">Temperature</option>
+                        <option value="weather_humidity_pct">Humidity</option>
+                        <option value="weather_precip_mm">Precipitation</option>
+                        <option value="weather_sunshine_hours">Sunshine Hours</option>
+                    </select>
+                </div>
+                <div class="chart-wrapper"><canvas id="chart-distribution"></canvas></div>
+            </div>
+            <div class="chart-card">
+                <div class="chart-header">
+                    <div>
+                        <div class="chart-title">Correlation Heatmap</div>
+                        <div class="chart-subtitle">Feature-to-feature correlation matrix</div>
+                    </div>
+                </div>
+                <div class="chart-wrapper" style="min-height:400px;"><canvas id="chart-correlation"></canvas></div>
+            </div>
+        </div>
+
+        <div class="table-container" id="data-table-container">
+            <table class="data-table" id="data-table">
+                <thead><tr id="data-table-header"></tr></thead>
+                <tbody id="data-table-body"></tbody>
+            </table>
+        </div>
+        <div class="pagination" id="data-pagination"></div>
+    </section>
+
+</main>
+
+<script src="/static/app.js"></script>
+</body>
+</html>
