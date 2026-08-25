@@ -498,3 +498,805 @@ async function updateGeoCharts() {
                 },
                 plugins: {
                     legend: { display: true, position: 'top' }
+                }
+            }
+        });
+    }
+
+    // Geographic scatter
+    const heatData = await api(`/api/heatmap-data?crop=&year=`);
+    const maxProd = Math.max(...heatData.map(d => d.Production), 1);
+
+    getOrCreateChart('chart-geo-scatter', {
+        type: 'bubble',
+        data: {
+            datasets: [{
+                label: 'Districts',
+                data: heatData.map(d => ({
+                    x: d.Longitude,
+                    y: d.Latitude,
+                    r: Math.max(2, Math.min(20, (d.Production / maxProd) * 25)),
+                    district: d.District,
+                    state: d.State,
+                    production: d.Production,
+                })),
+                backgroundColor: COLORS.primary + '44',
+                borderColor: COLORS.primary + '88',
+                borderWidth: 1,
+            }]
+        },
+        options: {
+            plugins: {
+                tooltip: {
+                    callbacks: {
+                        label: ctx => {
+                            const p = ctx.raw;
+                            return `${p.district}, ${p.state}: ${formatNumber(p.production)} k tonnes`;
+                        }
+                    }
+                }
+            },
+            scales: {
+                x: {
+                    title: { display: true, text: 'Longitude', font: { weight: 600 } },
+                    grid: { color: 'rgba(0,0,0,0.04)' },
+                },
+                y: {
+                    title: { display: true, text: 'Latitude', font: { weight: 600 } },
+                    grid: { color: 'rgba(0,0,0,0.04)' },
+                }
+            }
+        }
+    });
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+//  SECTION 4: PREDICT PRODUCTION
+// ══════════════════════════════════════════════════════════════════════════
+
+async function loadPredictForm() {
+    const states = await api('/api/states');
+    const crops = await api('/api/crops');
+
+    const stateSelect = document.getElementById('pred-state');
+    states.forEach(s => {
+        const opt = document.createElement('option');
+        opt.value = s.State;
+        opt.textContent = s.State;
+        stateSelect.appendChild(opt);
+    });
+
+    const cropSelect = document.getElementById('pred-crop');
+    crops.forEach(c => {
+        const opt = document.createElement('option');
+        opt.value = c.Crop;
+        opt.textContent = c.Crop;
+        cropSelect.appendChild(opt);
+    });
+
+    // Load model info
+    const modelInfo = await api('/api/model-info');
+    document.getElementById('metric-r2').textContent = modelInfo.metrics.R2;
+    document.getElementById('metric-rmse').textContent = modelInfo.metrics.RMSE;
+    document.getElementById('metric-mae').textContent = modelInfo.metrics.MAE;
+
+    // Feature importance bars — with staggered animation
+    const importance = await api('/api/feature-importance');
+    const container = document.getElementById('importance-bars');
+    const maxImp = Math.max(...importance.map(f => f.importance));
+    container.innerHTML = importance.slice(0, 10).map((f, i) => `
+        <div class="importance-row" data-width="${(f.importance / maxImp * 100).toFixed(1)}%" style="transition-delay: ${i * 0.08}s">
+            <span class="importance-label">${f.feature}</span>
+            <div class="importance-bar-track">
+                <div class="importance-bar-fill" data-target-width="${(f.importance / maxImp * 100).toFixed(1)}%"></div>
+            </div>
+            <span class="importance-value">${(f.importance * 100).toFixed(1)}%</span>
+        </div>
+    `).join('');
+
+    // Trigger staggered animation after render
+    requestAnimationFrame(() => {
+        container.querySelectorAll('.importance-row').forEach((row, i) => {
+            setTimeout(() => {
+                row.classList.add('animate');
+                const bar = row.querySelector('.importance-bar-fill');
+                bar.classList.add('animate');
+                bar.style.setProperty('width', bar.dataset.targetWidth, 'important');
+            }, i * 80);
+        });
+    });
+}
+
+async function onPredStateChange() {
+    const state = document.getElementById('pred-state').value;
+    const distSelect = document.getElementById('pred-district');
+    distSelect.innerHTML = '<option value="">Select District</option>';
+    if (state) {
+        const districts = await api(`/api/districts?state=${encodeURIComponent(state)}`);
+        districts.forEach(d => {
+            const opt = document.createElement('option');
+            opt.value = d;
+            opt.textContent = d;
+            distSelect.appendChild(opt);
+        });
+        // Attach auto-fill to district change
+        distSelect.onchange = () => autoFillDistrictData(state, distSelect.value);
+        showToast('info', `Loaded ${districts.length} districts for ${state}`);
+    }
+}
+
+// Auto-fill soil & weather sliders when a district is selected
+async function autoFillDistrictData(state, district) {
+    if (!state || !district) return;
+    try {
+        const data = await api(`/api/soil-weather?state=${encodeURIComponent(state)}&district=${encodeURIComponent(district)}`);
+        if (!data || Object.keys(data).length === 0) return;
+
+        const sliderMap = {
+            'Nitrogen (kg/ha)': 'nitrogen',
+            'Phosphorus (kg/ha)': 'phosphorus',
+            'Potassium (kg/ha)': 'potassium',
+            'Organic Carbon (%)': 'organic_carbon',
+            'Soil pH': 'soil_ph',
+            'weather_temp_c': 'temperature',
+            'weather_humidity_pct': 'humidity',
+            'weather_precip_mm': 'precipitation',
+            'weather_sunshine_hours': 'sunshine',
+        };
+
+        for (const [key, sliderId] of Object.entries(sliderMap)) {
+            if (data[key] !== undefined) {
+                const slider = document.getElementById(`pred-${sliderId}`);
+                if (slider) {
+                    animateSlider(slider, parseFloat(data[key]));
+                    document.getElementById(`val-${sliderId}`).textContent = parseFloat(data[key]).toFixed(slider.step.includes('.') ? 1 : 0);
+                }
+            }
+        }
+        showToast('success', `Auto-filled soil & weather data for ${district}`);
+    } catch (e) {
+        console.warn('Auto-fill failed:', e);
+    }
+}
+
+// Smoothly animate a slider to a target value
+function animateSlider(slider, target) {
+    const current = parseFloat(slider.value);
+    const diff = target - current;
+    const duration = 400;
+    const start = performance.now();
+
+    function step(now) {
+        const progress = Math.min((now - start) / duration, 1);
+        const eased = 1 - Math.pow(1 - progress, 3);
+        slider.value = current + diff * eased;
+        if (progress < 1) requestAnimationFrame(step);
+        else slider.value = target;
+    }
+    requestAnimationFrame(step);
+}
+
+function updateSliderVal(name) {
+    const slider = document.getElementById(`pred-${name}`);
+    const display = document.getElementById(`val-${name}`);
+    display.textContent = slider.value;
+}
+
+async function runPrediction() {
+    const btn = document.getElementById('predict-btn');
+    btn.innerHTML = '<span style="display:inline-flex;align-items:center;gap:8px;"><span class="loading-dot-anim"></span> Predicting...</span>';
+    btn.classList.add('loading');
+
+    const state = document.getElementById('pred-state').value;
+    const district = document.getElementById('pred-district').value;
+
+    // Get lat/lng for the district if selected
+    let lat = 20.0, lng = 78.0;
+    if (state && district) {
+        const soilData = await api(`/api/soil-weather?state=${encodeURIComponent(state)}&district=${encodeURIComponent(district)}`);
+        if (soilData.Latitude) lat = soilData.Latitude;
+        if (soilData.Longitude) lng = soilData.Longitude;
+    }
+
+    const body = {
+        state,
+        district,
+        crop: document.getElementById('pred-crop').value,
+        year: document.getElementById('pred-year').value,
+        latitude: lat,
+        longitude: lng,
+        nitrogen: parseFloat(document.getElementById('pred-nitrogen').value),
+        phosphorus: parseFloat(document.getElementById('pred-phosphorus').value),
+        potassium: parseFloat(document.getElementById('pred-potassium').value),
+        organic_carbon: parseFloat(document.getElementById('pred-organic_carbon').value),
+        soil_ph: parseFloat(document.getElementById('pred-soil_ph').value),
+        temperature: parseFloat(document.getElementById('pred-temperature').value),
+        humidity: parseFloat(document.getElementById('pred-humidity').value),
+        precipitation: parseFloat(document.getElementById('pred-precipitation').value),
+        sunshine: parseFloat(document.getElementById('pred-sunshine').value),
+    };
+
+    try {
+        const result = await apiPost('/api/predict', body);
+        if (result.success) {
+            animateResultValue(result.predicted_production);
+            document.getElementById('model-badge').style.display = 'inline-flex';
+            document.getElementById('model-name-badge').textContent = result.model_used;
+            document.getElementById('result-hero').classList.add('has-result');
+            showToast('success', `Predicted: ${result.predicted_production.toFixed(2)} thousand tonnes`);
+        } else {
+            document.getElementById('result-value').textContent = 'Error';
+            showToast('warning', 'Prediction failed — check inputs');
+        }
+    } catch (err) {
+        document.getElementById('result-value').textContent = 'Error';
+        showToast('warning', 'Prediction request failed');
+    }
+
+    btn.textContent = 'Predict Production';
+    btn.classList.remove('loading');
+}
+
+// Add ripple effect to predict button
+document.addEventListener('click', (e) => {
+    if (e.target.closest('.predict-btn')) {
+        const btn = e.target.closest('.predict-btn');
+        const rect = btn.getBoundingClientRect();
+        const ripple = document.createElement('span');
+        ripple.className = 'ripple';
+        const size = Math.max(rect.width, rect.height);
+        ripple.style.width = ripple.style.height = size + 'px';
+        ripple.style.left = (e.clientX - rect.left - size / 2) + 'px';
+        ripple.style.top = (e.clientY - rect.top - size / 2) + 'px';
+        btn.appendChild(ripple);
+        setTimeout(() => ripple.remove(), 600);
+    }
+});
+
+function animateResultValue(target) {
+    const el = document.getElementById('result-value');
+    const duration = 1500;
+    const start = performance.now();
+    const startVal = 0;
+
+    function step(now) {
+        const progress = Math.min((now - start) / duration, 1);
+        // More dramatic easing — elastic-like
+        const eased = 1 - Math.pow(1 - progress, 4);
+        const current = startVal + (target - startVal) * eased;
+        el.textContent = current.toFixed(2);
+        if (progress < 1) requestAnimationFrame(step);
+    }
+    requestAnimationFrame(step);
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+//  SECTION 5: MODEL PERFORMANCE
+// ══════════════════════════════════════════════════════════════════════════
+
+async function loadModelPerformance() {
+    const models = await api('/api/compare-models');
+
+    // R² bar chart
+    getOrCreateChart('chart-model-r2', {
+        type: 'bar',
+        data: {
+            labels: models.map(m => m.Model),
+            datasets: [{
+                data: models.map(m => m.R2),
+                backgroundColor: models.map((_, i) =>
+                    i === 0 ? COLORS.green :
+                    i === 1 ? COLORS.primary :
+                    i === 2 ? COLORS.amber :
+                    PALETTE[i + 3] + '88'
+                ),
+                borderRadius: 8,
+                borderSkipped: false,
+            }]
+        },
+        options: {
+            indexAxis: 'y',
+            plugins: {
+                tooltip: { callbacks: { label: ctx => `R² = ${ctx.parsed.x.toFixed(4)}` } }
+            },
+            scales: {
+                x: { min: 0, max: 1, grid: { color: 'rgba(0,0,0,0.04)' } },
+                y: { grid: { display: false } }
+            }
+        }
+    });
+
+    // RMSE chart
+    getOrCreateChart('chart-model-rmse', {
+        type: 'bar',
+        data: {
+            labels: models.map(m => m.Model),
+            datasets: [{
+                data: models.map(m => m.RMSE),
+                backgroundColor: models.map((_, i) => PALETTE[i] + '88'),
+                borderColor: models.map((_, i) => PALETTE[i]),
+                borderWidth: 2,
+                borderRadius: 6,
+                borderSkipped: false,
+            }]
+        },
+        options: {
+            indexAxis: 'y',
+            plugins: {
+                tooltip: { callbacks: { label: ctx => `RMSE = ${ctx.parsed.x.toFixed(4)}` } }
+            },
+            scales: {
+                x: { beginAtZero: true, grid: { color: 'rgba(0,0,0,0.04)' } },
+                y: { grid: { display: false } }
+            }
+        }
+    });
+
+    // MAE chart
+    getOrCreateChart('chart-model-mae', {
+        type: 'bar',
+        data: {
+            labels: models.map(m => m.Model),
+            datasets: [{
+                data: models.map(m => m.MAE),
+                backgroundColor: models.map((_, i) => PALETTE[i] + '88'),
+                borderColor: models.map((_, i) => PALETTE[i]),
+                borderWidth: 2,
+                borderRadius: 6,
+                borderSkipped: false,
+            }]
+        },
+        options: {
+            indexAxis: 'y',
+            plugins: {
+                tooltip: { callbacks: { label: ctx => `MAE = ${ctx.parsed.x.toFixed(4)}` } }
+            },
+            scales: {
+                x: { beginAtZero: true, grid: { color: 'rgba(0,0,0,0.04)' } },
+                y: { grid: { display: false } }
+            }
+        }
+    });
+
+    // Comparison table
+    const tbody = document.getElementById('model-table-body');
+    tbody.innerHTML = models.map((m, i) => {
+        const rankClass = i === 0 ? 'gold' : i === 1 ? 'silver' : i === 2 ? 'bronze' : '';
+        const bestR2 = i === 0;
+        return `
+            <tr>
+                <td><span class="rank-badge ${rankClass}">${i + 1}</span></td>
+                <td style="font-weight:${i < 3 ? '600' : '400'}">${m.Model}</td>
+                <td class="${bestR2 ? 'best-val' : ''}">${m.R2.toFixed(4)}</td>
+                <td>${m.Adj_R2.toFixed(4)}</td>
+                <td>${m.RMSE.toFixed(4)}</td>
+                <td>${m.MAE.toFixed(4)}</td>
+            </tr>
+        `;
+    }).join('');
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+//  SECTION 6: DATA EXPLORER
+// ══════════════════════════════════════════════════════════════════════════
+
+let currentPage = 1;
+let currentSearch = '';
+let currentSortBy = '';
+let currentSortOrder = 'asc';
+let searchTimeout = null;
+
+async function loadDataTable(page = 1) {
+    currentPage = page;
+    const params = new URLSearchParams({
+        page,
+        per_page: 50,
+        search: currentSearch,
+        sort_by: currentSortBy,
+        sort_order: currentSortOrder,
+    });
+
+    const data = await api(`/api/data?${params}`);
+
+    // Header
+    const headerRow = document.getElementById('data-table-header');
+    if (data.columns) {
+        headerRow.innerHTML = data.columns.map(col => {
+            const sortClass = currentSortBy === col ? (currentSortOrder === 'asc' ? 'sorted-asc' : 'sorted-desc') : '';
+            return `<th class="${sortClass}" onclick="sortTable('${col}')">${col}</th>`;
+        }).join('');
+    }
+
+    // Body
+    const tbody = document.getElementById('data-table-body');
+    if (data.data.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="${data.columns.length}" class="empty-state">No records found</td></tr>`;
+    } else {
+        tbody.innerHTML = data.data.map(row => `
+            <tr>${data.columns.map(col => {
+                let val = row[col];
+                if (typeof val === 'number' && !Number.isInteger(val)) val = val.toFixed(2);
+                return `<td>${val ?? ''}</td>`;
+            }).join('')}</tr>
+        `).join('');
+    }
+
+    // Pagination
+    renderPagination(data.page, data.total_pages, data.total);
+}
+
+function renderPagination(page, totalPages, total) {
+    const container = document.getElementById('data-pagination');
+    let html = '';
+
+    html += `<button class="page-btn" onclick="loadDataTable(1)" ${page <= 1 ? 'disabled' : ''}>«</button>`;
+    html += `<button class="page-btn" onclick="loadDataTable(${page - 1})" ${page <= 1 ? 'disabled' : ''}>‹</button>`;
+
+    const start = Math.max(1, page - 2);
+    const end = Math.min(totalPages, page + 2);
+    for (let i = start; i <= end; i++) {
+        html += `<button class="page-btn ${i === page ? 'active' : ''}" onclick="loadDataTable(${i})">${i}</button>`;
+    }
+
+    html += `<button class="page-btn" onclick="loadDataTable(${page + 1})" ${page >= totalPages ? 'disabled' : ''}>›</button>`;
+    html += `<button class="page-btn" onclick="loadDataTable(${totalPages})" ${page >= totalPages ? 'disabled' : ''}>»</button>`;
+    html += `<span class="page-info">${total.toLocaleString()} records</span>`;
+
+    container.innerHTML = html;
+}
+
+function sortTable(col) {
+    if (currentSortBy === col) {
+        currentSortOrder = currentSortOrder === 'asc' ? 'desc' : 'asc';
+    } else {
+        currentSortBy = col;
+        currentSortOrder = 'asc';
+    }
+    loadDataTable(1);
+}
+
+function debounceSearch() {
+    clearTimeout(searchTimeout);
+    searchTimeout = setTimeout(() => {
+        currentSearch = document.getElementById('data-search').value;
+        loadDataTable(1);
+    }, 350);
+}
+
+// Distribution histogram
+async function loadDistribution() {
+    const col = document.getElementById('dist-column').value;
+    const data = await api(`/api/distribution?column=${encodeURIComponent(col)}`);
+
+    const labels = data.bin_edges.slice(0, -1).map((b, i) =>
+        `${b.toFixed(1)}–${data.bin_edges[i + 1].toFixed(1)}`
+    );
+
+    getOrCreateChart('chart-distribution', {
+        type: 'bar',
+        data: {
+            labels,
+            datasets: [{
+                data: data.counts,
+                backgroundColor: COLORS.primary + '66',
+                borderColor: COLORS.primary,
+                borderWidth: 1,
+                borderRadius: 2,
+            }]
+        },
+        options: {
+            plugins: {
+                tooltip: {
+                    callbacks: {
+                        title: ctx => ctx[0].label,
+                        label: ctx => `Count: ${ctx.parsed.y.toLocaleString()}`
+                    }
+                }
+            },
+            scales: {
+                y: { beginAtZero: true, grid: { color: 'rgba(0,0,0,0.04)' }, title: { display: true, text: 'Count' } },
+                x: { grid: { display: false }, ticks: { maxRotation: 45, maxTicksLimit: 15 } }
+            }
+        }
+    });
+}
+
+// Correlation heatmap (using a grid of rectangles drawn on canvas)
+async function loadCorrelation() {
+    const data = await api('/api/correlation');
+    const canvas = document.getElementById('chart-correlation');
+    const ctx = canvas.getContext('2d');
+    const cols = data.columns;
+    const matrix = data.data;
+    const n = cols.length;
+
+    // Size the canvas
+    const size = Math.min(500, canvas.parentElement.clientWidth - 20);
+    canvas.width = size;
+    canvas.height = size;
+    const cellSize = (size - 80) / n;
+    const offsetX = 80;
+    const offsetY = 10;
+
+    ctx.clearRect(0, 0, size, size);
+    ctx.font = '9px Inter';
+    ctx.textAlign = 'right';
+
+    for (let i = 0; i < n; i++) {
+        for (let j = 0; j < n; j++) {
+            const val = matrix[i][j];
+            const x = offsetX + j * cellSize;
+            const y = offsetY + i * cellSize;
+
+            // Color: blue for positive, red for negative
+            if (val >= 0) {
+                const intensity = Math.round(val * 200);
+                ctx.fillStyle = `rgba(102, 126, 234, ${Math.abs(val) * 0.8 + 0.05})`;
+            } else {
+                ctx.fillStyle = `rgba(239, 68, 68, ${Math.abs(val) * 0.8 + 0.05})`;
+            }
+
+            ctx.fillRect(x, y, cellSize - 1, cellSize - 1);
+
+            // Value text
+            if (cellSize > 25) {
+                ctx.fillStyle = Math.abs(val) > 0.5 ? '#fff' : '#475569';
+                ctx.textAlign = 'center';
+                ctx.font = `${Math.min(9, cellSize / 4)}px Inter`;
+                ctx.fillText(val.toFixed(2), x + cellSize / 2, y + cellSize / 2 + 3);
+            }
+        }
+    }
+
+    // Column labels (top — rotated)
+    ctx.fillStyle = '#475569';
+    ctx.font = '8px Inter';
+    for (let j = 0; j < n; j++) {
+        ctx.save();
+        ctx.translate(offsetX + j * cellSize + cellSize / 2, offsetY + n * cellSize + 8);
+        ctx.rotate(Math.PI / 4);
+        ctx.textAlign = 'left';
+        ctx.fillText(shortLabel(cols[j]), 0, 0);
+        ctx.restore();
+    }
+
+    // Row labels (left)
+    ctx.textAlign = 'right';
+    for (let i = 0; i < n; i++) {
+        ctx.fillText(shortLabel(cols[i]), offsetX - 4, offsetY + i * cellSize + cellSize / 2 + 3);
+    }
+}
+
+function shortLabel(label) {
+    const map = {
+        'Nitrogen (kg/ha)': 'Nitrogen',
+        'Phosphorus (kg/ha)': 'Phosphorus',
+        'Potassium (kg/ha)': 'Potassium',
+        'Organic Carbon (%)': 'Org.Carbon',
+        'weather_temp_c': 'Temp',
+        'weather_humidity_pct': 'Humidity',
+        'weather_precip_mm': 'Precip',
+        'weather_sunshine_hours': 'Sunshine',
+    };
+    return map[label] || label;
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+//  NAVIGATION & ANIMATIONS
+// ══════════════════════════════════════════════════════════════════════════
+
+function scrollToSection(id) {
+    const el = document.getElementById(id);
+    if (el) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+    // Update active nav item
+    document.querySelectorAll('.nav-item').forEach(item => {
+        item.classList.toggle('active', item.dataset.section === id);
+    });
+}
+
+// Intersection Observer — animate sections on scroll & update nav
+const observer = new IntersectionObserver((entries) => {
+    entries.forEach(entry => {
+        if (entry.isIntersecting) {
+            entry.target.classList.add('visible');
+            // Update nav active state
+            const sectionId = entry.target.id;
+            document.querySelectorAll('.nav-item').forEach(item => {
+                item.classList.toggle('active', item.dataset.section === sectionId);
+            });
+        }
+    });
+}, { threshold: 0.1, rootMargin: '-50px 0px' });
+
+// ══════════════════════════════════════════════════════════════════════════
+//  UTILITY FUNCTIONS
+// ══════════════════════════════════════════════════════════════════════════
+
+function formatNumber(num) {
+    if (num === undefined || num === null) return '0';
+    return Number(num).toLocaleString('en-IN', { maximumFractionDigits: 2 });
+}
+
+function formatCompact(num) {
+    if (num >= 1000000) return (num / 1000000).toFixed(1) + 'M';
+    if (num >= 1000) return (num / 1000).toFixed(1) + 'K';
+    return num.toString();
+}
+
+function animateCounter(el) {
+    const text = el.getAttribute('data-target');
+    // If it's not a pure number, just display it
+    const numericValue = parseFloat(text.replace(/,/g, ''));
+    if (isNaN(numericValue)) return;
+
+    el.classList.add('counting');
+    el.textContent = '0';
+
+    const duration = 2000;
+    const start = performance.now();
+
+    function step(now) {
+        const progress = Math.min((now - start) / duration, 1);
+        // Springy easing for more satisfying feel
+        const eased = 1 - Math.pow(1 - progress, 4);
+        const current = numericValue * eased;
+        el.textContent = formatNumber(current.toFixed(0));
+        if (progress < 1) {
+            requestAnimationFrame(step);
+        } else {
+            el.textContent = text; // Final exact value
+            el.classList.remove('counting');
+        }
+    }
+    requestAnimationFrame(step);
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+//  TOAST NOTIFICATIONS
+// ══════════════════════════════════════════════════════════════════════════
+
+function showToast(type, message) {
+    const container = document.getElementById('toast-container');
+    if (!container) return;
+
+    const toast = document.createElement('div');
+    toast.className = `toast toast-${type}`;
+
+    const icons = { success: '\u2705', info: '\u2139\ufe0f', warning: '\u26a0\ufe0f' };
+    toast.innerHTML = `<span>${icons[type] || ''}</span><span>${message}</span>`;
+    container.appendChild(toast);
+
+    // Auto remove
+    setTimeout(() => {
+        toast.classList.add('toast-out');
+        setTimeout(() => toast.remove(), 300);
+    }, 3000);
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+//  SCROLL PROGRESS BAR & BACK-TO-TOP
+// ══════════════════════════════════════════════════════════════════════════
+
+function updateScrollProgress() {
+    const scrollTop = window.scrollY || document.documentElement.scrollTop;
+    const docHeight = document.documentElement.scrollHeight - document.documentElement.clientHeight;
+    const progress = docHeight > 0 ? (scrollTop / docHeight) * 100 : 0;
+
+    const bar = document.getElementById('scroll-progress');
+    if (bar) bar.style.width = progress + '%';
+
+    // Back to top button visibility
+    const btn = document.getElementById('back-to-top');
+    if (btn) {
+        btn.classList.toggle('visible', scrollTop > 400);
+    }
+}
+
+function scrollToTop() {
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+// Throttled scroll handler
+let scrollTicking = false;
+window.addEventListener('scroll', () => {
+    if (!scrollTicking) {
+        requestAnimationFrame(() => {
+            updateScrollProgress();
+            scrollTicking = false;
+        });
+        scrollTicking = true;
+    }
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+//  KEYBOARD SHORTCUTS
+// ══════════════════════════════════════════════════════════════════════════
+
+const SECTION_IDS = ['overview', 'crop-analytics', 'geographic', 'predict', 'models', 'data-explorer'];
+
+document.addEventListener('keydown', (e) => {
+    // Don't trigger if user is typing in an input/select
+    if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT' || e.target.tagName === 'TEXTAREA') return;
+
+    // Number keys 1-6 navigate to sections
+    const num = parseInt(e.key);
+    if (num >= 1 && num <= 6) {
+        e.preventDefault();
+        scrollToSection(SECTION_IDS[num - 1]);
+        showToast('info', `Navigated to section ${num}`);
+    }
+
+    // 'T' key goes to top
+    if (e.key === 't' || e.key === 'T') {
+        scrollToTop();
+    }
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+//  PARALLAX-LITE ON KPI CARDS (mouse tilt)
+// ══════════════════════════════════════════════════════════════════════════
+
+document.addEventListener('mousemove', (e) => {
+    const cards = document.querySelectorAll('.kpi-card');
+    cards.forEach(card => {
+        const rect = card.getBoundingClientRect();
+        const centerX = rect.left + rect.width / 2;
+        const centerY = rect.top + rect.height / 2;
+        const distX = (e.clientX - centerX) / rect.width;
+        const distY = (e.clientY - centerY) / rect.height;
+
+        // Only apply if mouse is reasonably close
+        const distance = Math.sqrt(distX * distX + distY * distY);
+        if (distance < 2) {
+            const rotateX = distY * -3;
+            const rotateY = distX * 3;
+            card.style.transform = `perspective(800px) rotateX(${rotateX}deg) rotateY(${rotateY}deg) translateY(-2px)`;
+        } else {
+            card.style.transform = '';
+        }
+    });
+});
+
+// Reset on mouse leave
+document.getElementById('kpi-grid')?.addEventListener('mouseleave', () => {
+    document.querySelectorAll('.kpi-card').forEach(card => {
+        card.style.transform = '';
+        card.style.transition = 'transform 0.5s ease';
+    });
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+//  INIT
+// ══════════════════════════════════════════════════════════════════════════
+
+document.addEventListener('DOMContentLoaded', async () => {
+    // Observe all sections for scroll animations
+    document.querySelectorAll('.dashboard-section').forEach(section => {
+        observer.observe(section);
+    });
+
+    // Initialize scroll progress
+    updateScrollProgress();
+
+    // Load all sections
+    try {
+        await loadOverview();
+        showToast('success', 'Dashboard loaded successfully!');
+        await loadCropFilters();
+        await updateCropAnalytics();
+        await loadGeoFilters();
+        await updateGeoCharts();
+        await loadPredictForm();
+        await loadModelPerformance();
+        await loadDataTable();
+        await loadDistribution();
+
+        // Defer correlation heatmap
+        setTimeout(loadCorrelation, 500);
+    } catch (err) {
+        console.error('Dashboard init error:', err);
+        showToast('warning', 'Some dashboard sections failed to load');
+    }
+});
